@@ -34,7 +34,13 @@ export function findUp(directory: string, pred: (dir: string) => boolean): strin
 export function findPackageJsonUp(packageName: string, directory: string) {
   return findUp(directory, (dir) => {
     const pjFile = path.join(dir, 'package.json');
-    return fs.existsSync(pjFile) && JSON.parse(fs.readFileSync(pjFile, 'utf-8')).name === packageName;
+    if (!fs.existsSync(pjFile)) {
+      return false;
+    }
+    const name = JSON.parse(fs.readFileSync(pjFile, 'utf-8')).name;
+    // Accept a scoped re-publish of the requested package (e.g. '@omarqureshi/jsii' for 'jsii'),
+    // so fork packages republished under a scope are still found by their original name.
+    return typeof name === 'string' && (name === packageName || name.endsWith(`/${packageName}`));
   });
 }
 
