@@ -3,8 +3,8 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as spec from '@jsii/spec';
 import { describeTypeReference, writeAssembly, SPEC_FILE_NAME, PackageJson } from '@jsii/spec';
-import * as chalk from 'chalk';
-import * as deepEqual from 'fast-deep-equal/es6';
+import chalk from 'chalk';
+import deepEqual from 'fast-deep-equal/es6';
 import * as log4js from 'log4js';
 import * as ts from 'typescript';
 
@@ -868,6 +868,21 @@ export class Assembler implements Emitter {
       return [];
     }
 
+    // Early exit if the declaration is marked with `@jsii ignore`. We resolve the
+    // symbol and require *every* declaration to be ignored (see `_isIgnored`) so
+    // this stays consistent with how references are resolved; otherwise a
+    // partially-ignored merged declaration would be dropped here but treated as
+    // public elsewhere. Without this, deriving from a `Partial<T>` would also
+    // raise spurious compiler errors on an ignored declaration.
+    const nodeSymbol = this._typeChecker.getSymbolAtLocation(ts.getNameOfDeclaration(node) ?? node);
+    const isIgnored =
+      nodeSymbol != null
+        ? this._isIgnored(nodeSymbol)
+        : Directives.of(node, (diag) => this._diagnostics.push(diag)).ignore != null;
+    if (isIgnored) {
+      return [];
+    }
+
     let jsiiType: spec.Type | undefined;
 
     if (ts.isClassDeclaration(node) && _isExported(node)) {
@@ -1484,6 +1499,19 @@ export class Assembler implements Emitter {
   }
 
   /**
+   * Whether a symbol is marked with the `@jsii ignore` directive on *all* of its
+   * declarations. We require every declaration to be ignored so that emission
+   * (`_visitNode`) and reference resolution (`_isPrivateOrInternal`) agree: a
+   * partially-ignored merged declaration stays a visible part of the public API.
+   */
+  private _isIgnored(symbol: ts.Symbol): boolean {
+    return (
+      (symbol.declarations?.length ?? 0) > 0 &&
+      symbol.declarations!.every((decl) => Directives.of(decl, (diag) => this._diagnostics.push(diag)).ignore != null)
+    );
+  }
+
+  /**
    * @returns true if this member is internal and should be omitted from the type manifest
    */
   private _isPrivateOrInternal(symbol: ts.Symbol, validateDeclaration?: ts.Declaration): boolean {
@@ -1497,9 +1525,7 @@ export class Assembler implements Emitter {
     }
 
     // If all the declarations are marked with `@jsii ignore`, then this is effetcively private as far as jsii is concerned.
-    if (
-      symbol.declarations?.every((decl) => Directives.of(decl, (diag) => this._diagnostics.push(diag)).ignore != null)
-    ) {
+    if (this._isIgnored(symbol)) {
       return true;
     }
 
@@ -2785,6 +2811,7 @@ export class Assembler implements Emitter {
     const javaPackages: Record<string, string[]> = {};
     const pythonModules: Record<string, string[]> = {};
     const goPackages: Record<string, string[]> = {};
+    const rubyModules: Record<string, string[]> = {};
 
     for (const submodule of this._submodules.values()) {
       const targets = submodule.targets as AssemblyTargets | undefined;
@@ -2801,12 +2828,16 @@ export class Assembler implements Emitter {
       if (targets?.go?.packageName) {
         accumList(goPackages, targets.go.packageName, submodule.fqn);
       }
+      if (targets?.ruby?.module) {
+        accumList(rubyModules, targets.ruby.module, submodule.fqn);
+      }
     }
 
     maybeError('dotnet', dotNetnamespaces);
     maybeError('java', javaPackages);
     maybeError('python', pythonModules);
     maybeError('go', goPackages);
+    maybeError('ruby', rubyModules);
 
     function accumList(set: Record<string, string[]>, key: string, value: string) {
       if (!set[key]) {

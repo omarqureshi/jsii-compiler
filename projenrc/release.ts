@@ -40,6 +40,22 @@ export class ReleaseWorkflow {
       },
     };
 
+    // `yarn version` resolves the release strategy via a merge-base between
+    // HEAD and `origin/main`. For tags on maintenance branches that fork point
+    // is far back, so we need the full commit graph (`fetch-depth: 0`) - but
+    // not historical file contents, hence `filter: blob:none`.
+    const checkoutStep = github.WorkflowSteps.checkout({
+      with: {
+        ref: '${{ github.ref }}',
+        repository: '${{ github.repository }}',
+        fetchDepth: 0,
+      },
+    });
+    const releaseCheckoutStep: github.workflows.JobStep = {
+      ...checkoutStep,
+      with: { ...checkoutStep.with, filter: 'blob:none' },
+    };
+
     release.addJob('build', {
       name: 'Build release package',
       env: {
@@ -57,26 +73,21 @@ export class ReleaseWorkflow {
       },
       runsOn: ['ubuntu-latest'],
       steps: [
-        github.WorkflowSteps.checkout({
-          with: { ref: '${{ github.ref }}', repository: '${{ github.repository }}' },
-        }),
-        {
-          // `yarn version` needs a common ancestor with `main` to determine the
-          // release strategy. The default checkout is shallow and tag-only, so
-          // we fetch the tip of `main` to give yarn an ancestor to diff against.
-          name: 'Fetch main for yarn version',
-          run: 'git fetch --depth=1 origin main:main',
-        },
+        releaseCheckoutStep,
         ...workflowSetup(this.project),
         {
           name: 'Prepare Release',
-          run: 'yarn release ${{ github.ref_name }}',
+          env: {
+            RELEASE_TAG: '${{ github.ref_name }}',
+          },
+          run: 'yarn release "$RELEASE_TAG"',
         },
         {
           name: 'Determine Target',
           id: publishTarget,
-          run: 'yarn ts-node projenrc/publish-target.ts ${{ github.ref_name }}',
+          run: 'yarn ts-node projenrc/publish-target.ts "$RELEASE_TAG"',
           env: {
+            RELEASE_TAG: '${{ github.ref_name }}',
             // A GitHub token is required to list GitHub Releases, so we can tell if the `latest` dist-tag is needed.
             GITHUB_TOKEN: '${{ github.token }}',
           },
@@ -154,7 +165,7 @@ export class ReleaseWorkflow {
           id: 'release-exists',
           name: 'Verify if release exists',
           run: [
-            'if gh release view ${{ github.ref_name }} --repo=${{ github.repository }} &>/dev/null',
+            'if gh release view "$RELEASE_TAG" --repo=${{ github.repository }} &>/dev/null',
             'then',
             'echo "result=true" >> $GITHUB_OUTPUT',
             'else',
@@ -163,49 +174,53 @@ export class ReleaseWorkflow {
           ].join('\n'),
           env: {
             GH_TOKEN: '${{ github.token }}',
+            RELEASE_TAG: '${{ github.ref_name }}',
           },
         },
         {
           name: 'Create PreRelease',
           if: `!fromJSON(steps.release-exists.outputs.result) && fromJSON(needs.build.outputs.${PublishTargetOutput.IS_PRERELEASE})`,
           run: [
-            'gh release create ${{ github.ref_name }}',
+            'gh release create "$RELEASE_TAG"',
             '--repo=${{ github.repository }}',
             '--generate-notes',
-            '--title=${{ github.ref_name }}',
+            '--title="$RELEASE_TAG"',
             '--verify-tag',
             '--prerelease',
             `--latest=\${{ needs.build.outputs.${PublishTargetOutput.IS_LATEST} }}`,
           ].join(' '),
           env: {
             GH_TOKEN: '${{ github.token }}',
+            RELEASE_TAG: '${{ github.ref_name }}',
           },
         },
         {
           name: 'Create Release',
           if: `!fromJSON(steps.release-exists.outputs.result) && !fromJSON(needs.build.outputs.${PublishTargetOutput.IS_PRERELEASE})`,
           run: [
-            'gh release create ${{ github.ref_name }}',
+            'gh release create "$RELEASE_TAG"',
             '--repo=${{ github.repository }}',
             '--generate-notes',
-            '--title=${{ github.ref_name }}',
+            '--title="$RELEASE_TAG"',
             '--verify-tag',
             `--latest=\${{ needs.build.outputs.${PublishTargetOutput.IS_LATEST} }}`,
           ].join(' '),
           env: {
             GH_TOKEN: '${{ github.token }}',
+            RELEASE_TAG: '${{ github.ref_name }}',
           },
         },
         {
           name: 'Attach assets',
           run: [
-            'gh release upload ${{ github.ref_name }}',
+            'gh release upload "$RELEASE_TAG"',
             '--repo=${{ github.repository }}',
             '--clobber',
             '${{ github.workspace }}/**/*',
           ].join(' '),
           env: {
             GH_TOKEN: '${{ github.token }}',
+            RELEASE_TAG: '${{ github.ref_name }}',
           },
         },
       ],
@@ -260,7 +275,10 @@ export class ReleaseWorkflow {
         {
           name: 'Tag "latest"',
           if: `fromJSON(needs.build.outputs.${PublishTargetOutput.IS_LATEST})`,
-          run: 'npm dist-tag add jsii@${{ github.ref_name }} latest',
+          env: {
+            RELEASE_TAG: '${{ github.ref_name }}',
+          },
+          run: 'npm dist-tag add "jsii@$RELEASE_TAG" latest',
         },
       ],
     });

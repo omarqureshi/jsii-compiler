@@ -3,7 +3,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import * as spec from '@jsii/spec';
 import { writeAssembly } from '@jsii/spec';
-import * as clone from 'clone';
+import clone from 'clone';
 import * as ts from 'typescript';
 
 import { loadProjectInfo, PackageJson } from '../src/project-info';
@@ -291,6 +291,59 @@ describe('loadProjectInfo', () => {
         proj.jsii.targets.python = {
           module: 'as-df',
           distName: 'as-df',
+        };
+      });
+    });
+
+    test('valid Ruby target configuration is loaded', () => {
+      return _withTestProject(
+        (projectRoot) => {
+          const { projectInfo } = loadProjectInfo(projectRoot);
+          expect(projectInfo.targets.ruby).toEqual({
+            gem: 'my-gem',
+            module: 'MyModule',
+            acronyms: ['AWS'],
+          });
+        },
+        (info) => {
+          info.jsii.targets.ruby = {
+            gem: 'my-gem',
+            module: 'MyModule',
+            acronyms: ['AWS'],
+          };
+        },
+      );
+    });
+
+    test('valid nested Ruby module namespace is loaded', () => {
+      return _withTestProject(
+        (projectRoot) => {
+          const { projectInfo } = loadProjectInfo(projectRoot);
+          expect(projectInfo.targets.ruby?.module).toEqual('My::Nested::Module');
+        },
+        (info) => {
+          info.jsii.targets.ruby = {
+            gem: 'my-gem',
+            module: 'My::Nested::Module',
+          };
+        },
+      );
+    });
+
+    test('invalid Ruby target key is rejected', () => {
+      expectProjectLoadError(/Unknown key in jsii.targets.ruby: invalid/, (proj) => {
+        proj.jsii.targets.ruby = {
+          gem: 'my-gem',
+          invalid: 'value',
+        } as any;
+      });
+    });
+
+    test('invalid Ruby module name is rejected', () => {
+      expectProjectLoadError(/jsii.targets.ruby.module contains non-identifier characters/, (proj) => {
+        proj.jsii.targets.ruby = {
+          gem: 'my-gem',
+          module: 'My-Module',
         };
       });
     });

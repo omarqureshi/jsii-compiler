@@ -24,7 +24,6 @@ export type TSCompilerOptions = Partial<
     | 'outDir'
     | 'rootDir'
     // TypeScript path mapping
-    | 'baseUrl'
     | 'paths'
     // Style preferences
     | 'forceConsistentCasingInFileNames'
@@ -56,6 +55,11 @@ export type AssemblyTargets = spec.PackageJson['jsii']['targets'] & {
   go?: {
     moduleName: string;
     packageName: string;
+  };
+  ruby?: {
+    gem?: string;
+    module?: string;
+    acronyms?: string[];
   };
   [otherLanguage: string]: unknown;
 };
@@ -285,14 +289,13 @@ export function loadProjectInfo(projectRoot: string): ProjectInfoResult {
     tsc: {
       outDir: pkg.jsii?.tsc?.outDir,
       rootDir: pkg.jsii?.tsc?.rootDir,
-      baseUrl: pkg.jsii?.tsc?.baseUrl,
       paths: pkg.jsii?.tsc?.paths,
       forceConsistentCasingInFileNames: pkg.jsii?.tsc?.forceConsistentCasingInFileNames,
       noImplicitOverride: pkg.jsii?.tsc?.noImplicitOverride,
       noPropertyAccessFromIndexSignature: pkg.jsii?.tsc?.noPropertyAccessFromIndexSignature,
       noUncheckedIndexedAccess: pkg.jsii?.tsc?.noUncheckedIndexedAccess,
       ..._sourceMapPreferences(pkg.jsii?.tsc),
-      types: pkg.jsii?.tsc?.types,
+      types: pkg.jsii?.tsc?.types ?? ['*'],
     },
     bin: pkg.bin,
     exports: pkg.exports,
@@ -318,6 +321,7 @@ export function validateTargets(targets: AssemblyTargets | undefined): AssemblyT
     python: ['module', 'distName', 'classifiers'],
     dotnet: ['namespace', 'packageId', 'iconUrl', 'versionSuffix'],
     go: ['moduleName', 'packageName', 'versionSuffix'],
+    ruby: ['gem', 'module', 'acronyms'],
   };
 
   for (const [language, config] of Object.entries(targets)) {
@@ -381,6 +385,17 @@ export function validateTargets(targets: AssemblyTargets | undefined): AssemblyT
   ) {
     if (!targets.python.module.split('.').every(isIdentifier)) {
       throw new JsiiError(`jsii.targets.python.module contains non-identifier characters: ${targets.python.module}`);
+    }
+  }
+
+  if (
+    targets.ruby &&
+    typeof targets.ruby === 'object' &&
+    'module' in targets.ruby &&
+    typeof targets.ruby.module === 'string'
+  ) {
+    if (!targets.ruby.module.split('::').every(isIdentifier)) {
+      throw new JsiiError(`jsii.targets.ruby.module contains non-identifier characters: ${targets.ruby.module}`);
     }
   }
 

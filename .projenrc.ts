@@ -1,4 +1,4 @@
-import { javascript, JsonFile, JsonPatch, github, typescript, YamlFile } from 'projen';
+import { javascript, JsonPatch, github, typescript, YamlFile } from 'projen';
 import { YarnNodeLinker } from 'projen/lib/javascript/yarnrc';
 import { BuildWorkflow } from './projenrc/build-workflow';
 import { JsiiCalcFixtures } from './projenrc/fixtures';
@@ -48,14 +48,13 @@ const project = new typescript.TypeScriptProject({
   tsconfig: {
     compilerOptions: {
       // @see https://github.com/microsoft/TypeScript/wiki/Node-Target-Mapping
-      lib: ['es2020', 'es2021.WeakRef'],
-      target: 'ES2020',
+      lib: ['es2023'],
+      target: 'ES2023',
 
-      esModuleInterop: false,
       noImplicitOverride: true,
       skipLibCheck: true,
-      moduleResolution: javascript.TypeScriptModuleResolution.NODE16,
-      module: 'node16',
+      moduleResolution: javascript.TypeScriptModuleResolution.NODE_NEXT,
+      module: 'node20',
       isolatedModules: true,
 
       sourceMap: true,
@@ -65,8 +64,8 @@ const project = new typescript.TypeScriptProject({
   },
   tsconfigDev: {
     compilerOptions: {
-      moduleResolution: javascript.TypeScriptModuleResolution.NODE16,
-      module: 'node16',
+      moduleResolution: 'nodenext' as javascript.TypeScriptModuleResolution,
+      module: 'node20',
     },
   },
 
@@ -140,22 +139,6 @@ new UpgradeDependencies(project, {
   },
 });
 
-// VSCode will look at the "closest" file named "tsconfig.json" when deciding on which config to use
-// for a given TypeScript file with the TypeScript language server. In order to make this "seamless"
-// we'll be dropping `tsconfig.json` files at strategic locations in the project. These will not be
-// committed as they are only here for VSCode comfort.
-for (const dir of ['build-tools', 'projenrc', 'test']) {
-  new JsonFile(project, `${dir}/tsconfig.json`, {
-    allowComments: true,
-    committed: false,
-    marker: true,
-    obj: {
-      extends: '../tsconfig.dev.json',
-      references: [{ path: '../tsconfig.json' }],
-    },
-    readonly: true,
-  });
-}
 project.tsconfig?.file?.patch(
   JsonPatch.add('/compilerOptions/composite', true),
   JsonPatch.add('/compilerOptions/declarationMap', true),
@@ -188,7 +171,7 @@ if (project.jest?.config) {
     'ts-jest',
     {
       compiler: 'typescript',
-      tsconfig: 'tsconfig.dev.json',
+      tsconfig: 'test/tsconfig.json',
       diagnostics: { ignoreCodes: ['TS151001'] },
     },
   ];
@@ -229,7 +212,6 @@ project.addDevDeps(
   '@types/deep-equal',
   '@types/lockfile',
   '@types/semver',
-  'all-contributors-cli',
   'clone',
   'eslint-plugin-unicorn',
   'fast-check',
@@ -250,19 +232,19 @@ project.eslint?.addIgnorePattern('test/negatives/**/*.ts');
 
 // Customize ESLint rules
 project.tsconfigDev.addInclude('build-tools/**/*.ts');
+// build-tools/*.ts are loose files not owned by a tsconfig project; allow the
+// typescript-eslint project service to lint them via the default project
+// (projen 0.101 switched eslint to `parserOptions.projectService`).
+project.eslint?.allowDefaultProjectFiles('build-tools/code-gen.ts');
 project.eslint!.rules!['no-bitwise'] = ['off']; // The TypeScript compiler API leverages some bit-flags.
-(project.eslint!.rules!.quotes = ['error', 'single', { avoidEscape: true, allowTemplateLiterals: true }]),
-  // Add Unicorn rules (https://github.com/sindresorhus/eslint-plugin-unicorn#rules)
-  project.eslint?.addPlugins('unicorn');
+project.eslint!.rules!.quotes = ['error', 'single', { avoidEscape: true, allowTemplateLiterals: true }];
+
+// Add Unicorn rules (https://github.com/sindresorhus/eslint-plugin-unicorn#rules)
+project.eslint?.addPlugins('unicorn');
 project.eslint?.addRules({
   'unicorn/prefer-node-protocol': ['error'],
   'unicorn/no-array-for-each': ['error'],
   'unicorn/no-unnecessary-await': ['error'],
-});
-
-// contributors:update
-project.addTask('contributors:update', {
-  exec: 'all-contributors check | grep "Missing contributors" -A 1 | tail -n1 | sed -e "s/,//g" | xargs -n1 | grep -v "\\[bot\\]" | grep -v "aws-cdk-automation" | xargs -n1 -I{} all-contributors add {} code',
 });
 
 // Register jsii-calc stuff in the work stream
